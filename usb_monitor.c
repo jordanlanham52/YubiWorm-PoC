@@ -1,86 +1,90 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <string.h>
-#include <errno.h>
-#include <signal.h>
+#include <unistd.h>
 #include <sys/socket.h>
 #include <linux/netlink.h>
-#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/prctl.h>
 
-static volatile sig_atomic_t running = 1;
-static void  handle_signal(int sig) { running = 0; }
+#define UEVENT_BUFFER_SIZE 2048
 
-#define UEVENT_BUF_LEN 2048
+static void daemonize(void) {
+    pid_t pid;
 
-static void parse_uevent(const char *buf, ssize_t len) {
-    char action[16]    = {0};
-    char subsystem[16] = {0};
-    char devname[64]   = {0};
+    // 1st fork
+    pid = fork();
+    if (pid < 0) exit(1);
+    if (pid > 0) exit(0);  
 
-    for (ssize_t i = 0; i < len; i += strlen(buf+i) + 1) {
-        const char *s = buf + i;
-        if      (strncmp(s, "ACTION=",    7) == 0) strncpy(action,    s+7, sizeof(action)-1);
-        else if (strncmp(s, "SUBSYSTEM=",10) == 0) strncpy(subsystem, s+10,sizeof(subsystem)-1);
-        else if (strncmp(s, "DEVNAME=",   8) == 0) strncpy(devname,   s+8, sizeof(devname)-1);
-    }
+    if (setsid() < 0) exit(1);
 
-    if (strcmp(subsystem, "hidraw") != 0) return;
+    pid = fork();
+    if (pid < 0) exit(1);
+    if (pid > 0) exit(0);
 
-    char path[128];
-    snprintf(path, sizeof(path), "/dev/%s", devname);
+    umask(0);
 
-    if (strcmp(action, "add") == 0) {
-        printf("[+] HID device added: %s\n", path);
-        int fd = open(path, O_RDWR|O_NONBLOCK);
-        if (fd < 0) {
-            perror("    open");
-            return;
-        }
-        
-        unsigned char out[64] = { 0x00, 0x01, 0x02, 0x03 };
-        ssize_t w = write(fd, out, sizeof(out));
-        if (w < 0) perror("    write");
-        else        printf("    wrote %zd bytes\n", w);
+    chdir("/");
 
-        unsigned char in[64];
-        ssize_t r = read(fd, in, sizeof(in));
-        if (r < 0) perror("    read");
-        else {
-            printf("    read %zd bytes:", r);
-            for (ssize_t i = 0; i < r; i++) printf(" %02x", in[i]);
-            printf("\n");
-        }
-        close(fd);
-    }
-    else if (strcmp(action, "remove") == 0) {
-        printf("[-] HID device removed: %s\n", path);
-    }
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+
+    prctl(PR_SET_NAME, "udevd", 0, 0, 0);
 }
 
 int main(void) {
-    struct sockaddr_nl addr = { .nl_family = AF_NETLINK, .nl_groups = 1 };
+    daemonize();
+
     int sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_KOBJECT_UEVENT);
-    if (sock < 0) { perror("socket"); return 1; }
-    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        perror("bind"); close(sock); return 1;
-    }
+    if (sock < 0) exit(1);
 
-    signal(SIGINT,  handle_signal);
-    signal(SIGTERM, handle_signal);
+    struct sockaddr_nl addr = {
+        .nl_family = AF_NETLINK,
+        .nl_pid    = getpid(),
+        .nl_groups = -1
+    };
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0)
+        exit(1);
 
-    printf("Listening for HID (hidraw) hot-plug events…\n");
-    while (running) {
-        char buf[UEVENT_BUF_LEN];
-        ssize_t len = recv(sock, buf, sizeof(buf), 0);
-        if (len < 0) {
-            if (errno == EINTR) continue;
-            perror("recv"); break;
+    char buf[UEVENT_BUFFER_SIZE];
+    while (1) {
+        int len = recv(sock, buf, sizeof(buf), 0);
+        if (len <= 0) continue;
+        buf[len] = '\0';
+
+        char *action = NULL, *devname = NULL, *hid_id = NULL;
+        for (char *p = buf; p < buf + len; p += strlen(p) + 1) {
+            if      (!strncmp(p, "ACTION=", 7)) action = p + 7;
+            else if (!strncmp(p, "DEVNAME=", 8)) devname = p + 8;
+            else if (!strncmp(p, "HID_ID=", 7))   hid_id = p + 7;
         }
-        parse_uevent(buf, len);
+
+        if (action && devname
+            && !strcmp(action, "add")
+            && !strncmp(devname, "hidraw", 6)
+            && hid_id)
+        {
+            unsigned int bus, vendor, product;
+            if (sscanf(hid_id, "%x:%x:%x", &bus, &vendor, &product) == 3
+                && vendor == 0x1050) 
+            {
+                pid_t pid = fork();
+                if (pid == 0) {
+                    execl("/usr/local/bin/reprogram_yubi",
+                          "reprogram_yubi",
+                          devname,
+                          (char*)NULL);
+                    _exit(1);
+                } else if (pid > 0) {
+                    waitpid(pid, NULL, 0);
+                }
+            }
+        }
     }
 
-    close(sock);
-    printf("Exiting.\n");
     return 0;
 }
