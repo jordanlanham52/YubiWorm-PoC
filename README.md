@@ -17,6 +17,13 @@ YubiWorm demonstrates how a real YubiKey can be weaponized to silently deliver a
 
 ## Project Structure & Paths
 
+Below is an overview of each YubiWorm component, what it does, and where it resides on Linux and Windows installations:
+
+- Monitor Daemon: A background process that listens for YubiKey insertions and triggers the reprogram helper.
+- Reprogram Helper: A small helper binary that overwrites the YubiKey’s Static OTP slot with a HID macro payload.
+- Downloader Script: A bootstrapping installer (payload.sh) that hosts use to install binaries and persistence.
+- Cron Persistence: Ensures the monitor daemon auto-starts on reboot via cron (or Scheduled Task on Windows).
+  
 | Component          | Linux Path                                  | Windows Path (WSL or Git Bash)                          |
 |--------------------|---------------------------------------------|----------------------------------------------------------|
 | Monitor Daemon     | `/usr/local/bin/udev-monitor`               | `C:\Tools\udev-monitor.exe`                              |
