@@ -2,7 +2,8 @@
 
 **Turning a Trusted YubiKey into a Propagating Worm**
 
-<img width="1080" height="1080" alt="yubiworm-turning-a-trusted-yubikey-into-a-propaga_lanham_1030572_banner" src="https://github.com/user-attachments/assets/21f29389-9a52-49cb-ba3b-25770cd83cc0" />
+<img width="1080" height="1080" alt="yubiworm-turning-a-trusted-yubikey-into-a-propaga_lanham_1030572_banner(1)" src="https://github.com/user-attachments/assets/3be17258-999e-4fba-8867-3a7cc2699280" />
+
 
 
 ---
